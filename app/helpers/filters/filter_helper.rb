@@ -28,6 +28,8 @@ module Filters::FilterHelper
   end
 
   def build_condition_query_string(current_filter, query_hash, current_index)
+    return unread_filter_query(query_hash) if unread_condition_for_conversations?(query_hash)
+
     filter_operator_value = filter_operation(query_hash, current_index)
 
     return handle_nil_filter(query_hash, current_index) if current_filter.nil?
@@ -102,6 +104,28 @@ module Filters::FilterHelper
 
     operator = condition['query_operator'].upcase
     raise CustomExceptions::CustomFilter::InvalidQueryOperator.new({}) unless %w[AND OR].include?(operator)
+  end
+
+  # "unread" is not a column: it resolves to the shared per-agent EXISTS predicate
+  # (Conversation.unread_for_sql). Scoped to the conversations filter only — automation
+  # (@user is nil) and contact filters never reach this branch.
+  def unread_condition_for_conversations?(query_hash)
+    query_hash['attribute_key'] == 'unread' &&
+      respond_to?(:filter_config, true) &&
+      filter_config[:table_name] == 'conversations'
+  end
+
+  def unread_filter_query(query_hash)
+    raise CustomExceptions::CustomFilter::InvalidAttribute.new(key: 'unread', allowed_keys: []) if @user.blank?
+    raise CustomExceptions::CustomFilter::InvalidAttribute.new(key: 'unread', allowed_keys: []) \
+      unless @account&.feature_enabled?('filter_conversations_by_unread')
+
+    raw_value = query_hash['values'].is_a?(Array) ? query_hash['values'].first : query_hash['values']
+    # XNOR: "unread equal_to true" and "read not_equal_to true" both mean unread.
+    wants_unread = ActiveModel::Type::Boolean.new.cast(raw_value) == (query_hash[:filter_operator] == 'equal_to')
+    predicate = Conversation.unread_for_sql(@user)
+    predicate = "NOT (#{predicate})" unless wants_unread
+    "(#{predicate}) #{query_hash[:query_operator]}"
   end
 
   def conversation_status_values(values)

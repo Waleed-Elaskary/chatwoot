@@ -443,6 +443,10 @@ const actions = {
     commit(types.CHANGE_CHAT_SORT_FILTER, data);
   },
 
+  setChatUnreadFilter({ commit }, data) {
+    commit(types.CHANGE_CHAT_UNREAD_FILTER, data);
+  },
+
   updateAssignee({ commit }, data) {
     commit(types.UPDATE_ASSIGNEE, data);
   },

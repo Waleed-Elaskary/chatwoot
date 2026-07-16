@@ -47,6 +47,10 @@ class Conversations::FilterService < FilterService
   end
 
   def conversations
-    @conversations.sort_on_last_activity_at.page(current_page)
+    scope = @conversations.sort_on_last_activity_at
+    if @user.present? && @account.feature_enabled?('filter_conversations_by_unread')
+      scope = scope.select('conversations.*', "(#{Conversation.unread_for_sql(@user)}) AS unread_for_agent")
+    end
+    scope.page(current_page)
   end
 end

@@ -118,6 +118,9 @@ class Api::V1::Accounts::ConversationsController < Api::V1::Accounts::BaseContro
     # Always update immediately if there are unread messages to maintain accurate read/unread state.
     # Visiting a conversation should clear any unread inbox notifications for this conversation.
     Notification::MarkConversationReadService.new(user: Current.user, account: Current.account, conversation: @conversation).perform
+    # Per-agent read state for the "unread" filter — throttled by THIS agent's own last_seen,
+    # independent of the team-wide agent_last_seen_at logic below.
+    update_agent_read_state(DateTime.now.utc)
     return update_last_seen_on_conversation(DateTime.now.utc, true) if assignee? && @conversation.assignee_unread_messages.any?
     return update_last_seen_on_conversation(DateTime.now.utc, false) if !assignee? && @conversation.unread_messages.any?
 
@@ -130,6 +133,8 @@ class Api::V1::Accounts::ConversationsController < Api::V1::Accounts::BaseContro
   def unread
     last_incoming_message = @conversation.messages.incoming.last
     last_seen_at = last_incoming_message.created_at - 1.second if last_incoming_message.present?
+    # Force the per-agent cutoff back so the conversation is unread for THIS agent again.
+    update_agent_read_state(last_seen_at, force: true)
     update_last_seen_on_conversation(last_seen_at, true)
   end
 
@@ -165,6 +170,31 @@ class Api::V1::Accounts::ConversationsController < Api::V1::Accounts::BaseContro
 
     ::Conversations::UnreadCounts::Notifier.new(@conversation).perform
     ::Conversations::UnreadCounts::FilteredCountInvalidator.new(Current.account).conversation_changed!
+  end
+
+  # Records the current agent's personal "seen" cutoff for this conversation, powering the
+  # per-agent unread filter (see Conversation.unread_for). Gated by the feature flag and, for
+  # the mark-read path, throttled by the agent's own last_seen so rapid conversation switching
+  # doesn't generate redundant writes. `force: true` (mark-unread) always writes.
+  def update_agent_read_state(last_seen_at, force: false)
+    return unless Current.user.is_a?(User)
+    return unless Current.account.feature_enabled?('filter_conversations_by_unread')
+
+    read_state = @conversation.conversation_read_states.find_or_initialize_by(user_id: Current.user.id)
+    return if !force && agent_read_state_fresh?(read_state)
+
+    read_state.account_id = @conversation.account_id
+    read_state.last_seen_at = last_seen_at
+    read_state.save!
+  end
+
+  # True when this agent has already seen the conversation within the hour and nothing new has
+  # arrived since — mirrors should_update_last_seen? but scoped to the current agent.
+  def agent_read_state_fresh?(read_state)
+    return false if read_state.new_record? || read_state.last_seen_at.blank?
+    return false if read_state.last_seen_at < 1.hour.ago
+
+    @conversation.messages.incoming.where('messages.created_at > ?', read_state.last_seen_at).none?
   end
 
   def should_update_last_seen?
