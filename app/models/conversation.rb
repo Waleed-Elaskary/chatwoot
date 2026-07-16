@@ -89,6 +89,9 @@ class Conversation < ApplicationRecord
   scope :sort_on_unread, lambda { |_direction|
     order(unread_messages_count_arel.desc).sort_on_last_activity_at('desc')
   }
+  # Per-agent unread: conversations with an incoming message newer than THIS user's
+  # personal last-seen cutoff (or never seen by them). See #unread_for_sql.
+  scope :unread_for, ->(user) { where(unread_for_sql(user)) }
   scope :unattended, -> { where(first_reply_created_at: nil).or(where.not(waiting_since: nil)) }
   scope :resolvable_not_waiting, lambda { |auto_resolve_after|
     return none if auto_resolve_after.to_i.zero?
@@ -119,6 +122,7 @@ class Conversation < ApplicationRecord
 
   has_many :mentions, dependent: :destroy_async
   has_many :messages, dependent: :destroy_async, autosave: true
+  has_many :conversation_read_states, dependent: :delete_all
   has_one :csat_survey_response, dependent: :destroy_async
   has_many :conversation_participants, dependent: :destroy_async
   has_many :notifications, as: :primary_actor, dependent: :destroy_async
@@ -225,6 +229,46 @@ class Conversation < ApplicationRecord
                       .where(unread_messages_condition(messages, conversations))
 
     Arel::Nodes::Grouping.new(unread_messages.ast)
+  end
+
+  # Single source of truth for the per-agent "unread" predicate, shared by the quick-toggle
+  # (ConversationFinder#filter_by_unread via the :unread_for scope), the advanced filter
+  # (Filters::FilterHelper), and the per-user serializer flag (#unread_for_agent?).
+  #
+  # A conversation is unread FOR `user` when it has an incoming message created after that
+  # user's per-conversation last_seen_at in conversation_read_states. When the user has never
+  # opened it there is no row, so COALESCE falls back to -infinity and every incoming message
+  # counts as unread. Implemented as an EXISTS semi-join (short-circuits, no DISTINCT) backed by
+  # index_messages_on_conversation_account_type_created and the read-state unique index.
+  def self.unread_for_sql(user)
+    sanitize_sql_array(
+      [
+        <<-SQL.squish,
+          EXISTS (
+            SELECT 1 FROM messages
+            WHERE messages.conversation_id = conversations.id
+              AND messages.account_id = conversations.account_id
+              AND messages.message_type = :incoming
+              AND messages.created_at > COALESCE(
+                (SELECT conversation_read_states.last_seen_at
+                   FROM conversation_read_states
+                  WHERE conversation_read_states.conversation_id = conversations.id
+                    AND conversation_read_states.user_id = :user_id),
+                '-infinity'::timestamp
+              )
+          )
+        SQL
+        { incoming: Message.message_types[:incoming], user_id: user.id }
+      ]
+    )
+  end
+
+  # Per-conversation fallback used by the serializer when the list query has not already
+  # annotated `unread_for_agent` (e.g. show/create/update rendering a single conversation).
+  def unread_for_agent?(user)
+    return false unless user.is_a?(User)
+
+    self.class.where(id: id).unread_for(user).exists?
   end
 
   def self.unread_messages_condition(messages, conversations)

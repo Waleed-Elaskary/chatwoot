@@ -227,6 +227,10 @@
   display_name: Unread Count For Filters
   enabled: false
   chatwoot_internal: true
+- name: filter_conversations_by_unread
+  display_name: Filter Conversations by Unread
+  enabled: false
+  chatwoot_internal: true
 - name: companies
   display_name: Companies
   enabled: false

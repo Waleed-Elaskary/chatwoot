@@ -3,6 +3,7 @@
  */
 export const CONVERSATION_ATTRIBUTES = {
   STATUS: 'status',
+  UNREAD: 'unread',
   PRIORITY: 'priority',
   ASSIGNEE_ID: 'assignee_id',
   INBOX_ID: 'inbox_id',

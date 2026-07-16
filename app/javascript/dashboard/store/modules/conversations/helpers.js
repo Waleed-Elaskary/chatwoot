@@ -35,8 +35,21 @@ export const filterByUnattended = (
     : shouldFilter;
 };
 
+// Per-agent unread: `unread_for_agent` is serialized for the current viewer, so this keeps the
+// reactive list in sync as messages arrive / the agent reads conversations. See Conversation.unread_for.
+export const filterByUnread = (shouldFilter, unreadOnly, unreadForAgent) => {
+  return unreadOnly ? !!unreadForAgent && shouldFilter : shouldFilter;
+};
+
 export const applyPageFilters = (conversation, filters) => {
-  const { inboxId, status, labels = [], teamId, conversationType } = filters;
+  const {
+    inboxId,
+    status,
+    labels = [],
+    teamId,
+    conversationType,
+    unreadOnly,
+  } = filters;
   const {
     status: chatStatus,
     inbox_id: chatInboxId,
@@ -44,6 +57,7 @@ export const applyPageFilters = (conversation, filters) => {
     meta = {},
     first_reply_created_at: firstReplyOn,
     waiting_since: waitingSince,
+    unread_for_agent: unreadForAgent,
   } = conversation;
   const team = meta.team || {};
   const { id: chatTeamId } = team;
@@ -58,6 +72,7 @@ export const applyPageFilters = (conversation, filters) => {
     firstReplyOn,
     waitingSince
   );
+  shouldFilter = filterByUnread(shouldFilter, unreadOnly, unreadForAgent);
 
   return shouldFilter;
 };

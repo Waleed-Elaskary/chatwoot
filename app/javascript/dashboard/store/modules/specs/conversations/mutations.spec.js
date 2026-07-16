@@ -28,7 +28,12 @@ describe('#mutations', () => {
       const lastSeen = new Date().getTime() / 1000;
       mutations[types.UPDATE_MESSAGE_UNREAD_COUNT](state, { id: 1, lastSeen });
       expect(state.allConversations).toEqual([
-        { id: 1, agent_last_seen_at: lastSeen, unread_count: 0 },
+        {
+          id: 1,
+          agent_last_seen_at: lastSeen,
+          unread_count: 0,
+          unread_for_agent: false,
+        },
       ]);
     });
 

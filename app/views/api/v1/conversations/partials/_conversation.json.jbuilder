@@ -54,6 +54,17 @@ json.updated_at conversation.updated_at.to_f
 json.timestamp conversation.last_activity_at.to_i
 json.first_reply_created_at conversation.first_reply_created_at.to_i
 json.unread_count conversation.unread_incoming_messages.count
+if Current.account&.feature_enabled?('filter_conversations_by_unread')
+  # Per-agent unread flag for the current viewer (see Conversation.unread_for). Prefers the
+  # value annotated by ConversationFinder to avoid an N+1; otherwise computed for this row.
+  json.unread_for_agent(
+    if conversation.has_attribute?('unread_for_agent')
+      ActiveModel::Type::Boolean.new.cast(conversation.read_attribute('unread_for_agent'))
+    else
+      conversation.unread_for_agent?(Current.user)
+    end
+  )
+end
 json.last_non_activity_message conversation.messages.where(account_id: conversation.account_id).non_activity_messages.first.try(:push_event_data)
 json.last_activity_at conversation.last_activity_at.to_i
 json.priority conversation.priority

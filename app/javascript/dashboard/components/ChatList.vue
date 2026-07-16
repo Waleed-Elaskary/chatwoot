@@ -1,6 +1,15 @@
 <script setup>
-import { ref, unref, provide, computed, watch, onMounted } from 'vue';
+import {
+  ref,
+  unref,
+  provide,
+  computed,
+  watch,
+  onMounted,
+  onBeforeUnmount,
+} from 'vue';
 import { useStore } from 'vuex';
+import { useDebounceFn } from '@vueuse/core';
 import { useRoute, useRouter } from 'vue-router';
 import {
   useMapGetter,
@@ -34,6 +43,8 @@ import { useConversationRequiredAttributes } from 'dashboard/composables/useConv
 import { emitter } from 'shared/helpers/mitt';
 
 import wootConstants from 'dashboard/constants/globals';
+import MUTATION_TYPES from '../store/mutation-types';
+import { MESSAGE_TYPE } from 'shared/constants/messages';
 import advancedFilterOptions from './widgets/conversation/advancedFilterItems';
 import filterQueryGenerator from '../helper/filterQueryGenerator.js';
 import languages from 'dashboard/components/widgets/conversation/advancedFilterItems/languages';
@@ -75,6 +86,7 @@ const resolveAttributesModalRef = ref(null);
 const activeAssigneeTab = ref(wootConstants.ASSIGNEE_TYPE.ME);
 const activeStatus = ref(wootConstants.STATUS_TYPE.OPEN);
 const activeSortBy = ref(wootConstants.SORT_BY_TYPE.LAST_ACTIVITY_AT_DESC);
+const activeUnreadOnly = ref(false);
 const showAdvancedFilters = ref(false);
 // chatsOnView is to store the chats that are currently visible on the screen,
 // which mirrors the conversationList.
@@ -256,7 +268,20 @@ const conversationFilters = computed(() => {
     labels: props.label ? [props.label] : undefined,
     teamId: props.teamId || undefined,
     conversationType: props.conversationType || undefined,
+    unreadOnly: activeUnreadOnly.value || undefined,
   };
+});
+
+// True when the current view is scoped to unread — the basic toggle, an applied advanced
+// filter, or an active folder whose saved query filters on unread.
+const isUnreadFilterActive = computed(() => {
+  if (activeUnreadOnly.value) return true;
+  const hasUnread = list =>
+    (list || []).some(
+      f => f.attribute_key === 'unread' || f.attributeKey === 'unread'
+    );
+  if (hasUnread(appliedFilters.value)) return true;
+  return hasUnread(activeFolder.value?.query?.payload);
 });
 
 const activeTeam = computed(() => {
@@ -380,8 +405,9 @@ const uniqueInboxes = computed(() => {
 // ---------------------- Methods -----------------------
 function setFiltersFromUISettings() {
   const { conversations_filter_by: filterBy = {} } = uiSettings.value;
-  const { status, order_by: orderBy } = filterBy;
+  const { status, order_by: orderBy, unread_only: unreadOnly } = filterBy;
   activeStatus.value = status || wootConstants.STATUS_TYPE.OPEN;
+  activeUnreadOnly.value = unreadOnly || false;
   activeSortBy.value = Object.values(wootConstants.SORT_BY_TYPE).includes(
     orderBy
   )
@@ -572,6 +598,22 @@ function fetchConversations() {
   store.dispatch('fetchAllConversations').then(emitConversationLoaded);
 }
 
+// Debounced, coalesced refetch of the current filtered page while an unread filter is active.
+// Reactive per-agent flags handle already-loaded conversations; this reconciles the ones the
+// store can't patch in place (e.g. a previously-read conversation that scrolled out of the
+// loaded set, or a brand-new conversation under an active advanced filter). One lightweight
+// paginated request per window — like a manual refresh, not the reverted eager precompute.
+const reconcileUnreadList = useDebounceFn(() => {
+  if (!isUnreadFilterActive.value) return;
+  if (hasActiveFolders.value) {
+    fetchSavedFilteredConversations(activeFolder.value.query);
+  } else if (hasAppliedFilters.value) {
+    fetchFilteredConversations(appliedFilters.value);
+  } else {
+    fetchConversations();
+  }
+}, 4000);
+
 function resetAndFetchData() {
   appliedFilter.value = [];
   resetBulkActions();
@@ -617,6 +659,8 @@ function updateAssigneeTab(selectedTab) {
 function onBasicFilterChange(value, type) {
   if (type === 'status') {
     activeStatus.value = value;
+  } else if (type === 'unread') {
+    activeUnreadOnly.value = value;
   } else {
     activeSortBy.value = value;
   }
@@ -805,15 +849,34 @@ useEmitter('fetch_conversation_stats', () => {
   store.dispatch('conversationStats/get', conversationFilters.value);
 });
 
+let unsubscribeUnreadReconcile = null;
+
 onMounted(() => {
   store.dispatch('setChatListFilters', conversationFilters.value);
   setFiltersFromUISettings();
   store.dispatch('setChatStatusFilter', activeStatus.value);
   store.dispatch('setChatSortFilter', activeSortBy.value);
+  store.dispatch('setChatUnreadFilter', activeUnreadOnly.value);
   resetAndFetchData();
   if (hasActiveFolders.value) {
     store.dispatch('campaigns/get');
   }
+
+  // Reconcile the unread list when new activity arrives that the store can't patch in place.
+  unsubscribeUnreadReconcile = store.subscribe(mutation => {
+    if (!isUnreadFilterActive.value) return;
+    const isNewIncoming =
+      mutation.type === MUTATION_TYPES.ADD_MESSAGE &&
+      mutation.payload?.message_type === MESSAGE_TYPE.INCOMING;
+    const isNewConversation = mutation.type === MUTATION_TYPES.ADD_CONVERSATION;
+    if (isNewIncoming || isNewConversation) {
+      reconcileUnreadList();
+    }
+  });
+});
+
+onBeforeUnmount(() => {
+  unsubscribeUnreadReconcile?.();
 });
 
 const deleteConversationDialogRef = ref(null);

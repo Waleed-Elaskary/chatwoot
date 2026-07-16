@@ -84,6 +84,7 @@ class ConversationFinder
     filter_by_status unless params[:q]
     filter_by_team
     filter_by_labels
+    filter_by_unread
     filter_by_query
     filter_by_source_id
   end
@@ -177,6 +178,21 @@ class ConversationFinder
     @conversations = @conversations.tagged_with(params[:labels], any: true)
   end
 
+  # Per-agent "unread" filter. Runs only when explicitly requested, so the EXISTS predicate
+  # is paid for on demand (never eagerly precomputed). Placed before the bucket-count query so
+  # the mine/unassigned/all counts reflect unread within each bucket.
+  def filter_by_unread
+    return unless unread_filter_requested?
+
+    @conversations = @conversations.unread_for(current_user)
+  end
+
+  def unread_filter_requested?
+    return false unless current_account.feature_enabled?('filter_conversations_by_unread')
+
+    ActiveModel::Type::Boolean.new.cast(params[:unread])
+  end
+
   def filter_by_source_id
     return unless params[:source_id]
 
@@ -213,8 +229,18 @@ class ConversationFinder
     )
   end
 
+  # Annotate each row with the current agent's unread state so the serializer avoids an N+1.
+  # Skipped for search (its eager_load of messages is incompatible with a custom select) and
+  # when the feature is off; the serializer falls back to Conversation#unread_for_agent? then.
+  def annotate_unread_for_agent(relation)
+    return relation if params[:q].present?
+    return relation unless current_account.feature_enabled?('filter_conversations_by_unread')
+
+    relation.select('conversations.*', "(#{Conversation.unread_for_sql(current_user)}) AS unread_for_agent")
+  end
+
   def conversations
-    @conversations = conversations_base_query
+    @conversations = annotate_unread_for_agent(conversations_base_query)
 
     sort_by, sort_order = SORT_OPTIONS[params[:sort_by]] || SORT_OPTIONS['last_activity_at_desc']
     @conversations = @conversations.send(sort_by, sort_order)

@@ -2,7 +2,7 @@ import types from '../../mutation-types';
 import getters, { getSelectedChatConversation } from './getters';
 import actions from './actions';
 import { findPendingMessageIndex } from './helpers';
-import { MESSAGE_STATUS } from 'shared/constants/messages';
+import { MESSAGE_STATUS, MESSAGE_TYPE } from 'shared/constants/messages';
 import wootConstants from 'dashboard/constants/globals';
 import { BUS_EVENTS } from '../../../../shared/constants/busEvents';
 import { emitter } from 'shared/helpers/mitt';
@@ -14,6 +14,7 @@ const state = {
   listLoadingStatus: true,
   chatStatusFilter: wootConstants.STATUS_TYPE.OPEN,
   chatSortFilter: wootConstants.SORT_BY_TYPE.LATEST,
+  chatUnreadFilter: false,
   currentInbox: null,
   selectedChatId: null,
   appliedFilters: [],
@@ -222,6 +223,15 @@ export const mutations = {
       chat.timestamp = message.created_at;
       const { conversation: { unread_count: unreadCount = 0 } = {} } = message;
       chat.unread_count = unreadCount;
+      // Per-agent unread: an incoming message the current agent isn't looking at is unread
+      // FOR THEM. My own read action clears it (UPDATE_MESSAGE_UNREAD_COUNT); a teammate's
+      // read never reaches this flag.
+      if (
+        message.message_type === MESSAGE_TYPE.INCOMING &&
+        selectedChatId !== conversationId
+      ) {
+        chat.unread_for_agent = true;
+      }
       if (selectedChatId === conversationId) {
         emitter.emit(BUS_EVENTS.SCROLL_TO_MESSAGE);
       }
@@ -231,6 +241,12 @@ export const mutations = {
   [types.ADD_CONVERSATION](_state, conversation) {
     const exists = _state.allConversations.some(c => c.id === conversation.id);
     if (!exists) {
+      // A newly created conversation is unread for everyone until opened; the broadcast payload
+      // has no per-agent flag, so derive it from the (team-wide) unread_count, which for a
+      // brand-new conversation coincides with per-agent unread.
+      if (conversation.unread_for_agent === undefined) {
+        conversation.unread_for_agent = (conversation.unread_count || 0) > 0;
+      }
       _state.allConversations.push(conversation);
     }
   },
@@ -283,6 +299,9 @@ export const mutations = {
     if (chat) {
       chat.agent_last_seen_at = lastSeen;
       chat.unread_count = unreadCount;
+      // This mutation only fires from the current agent's own mark-read/unread actions,
+      // so it is the correct place to update their per-agent unread flag.
+      chat.unread_for_agent = (unreadCount || 0) > 0;
     }
   },
   [types.CHANGE_CHAT_STATUS_FILTER](_state, data) {
@@ -291,6 +310,10 @@ export const mutations = {
 
   [types.CHANGE_CHAT_SORT_FILTER](_state, data) {
     _state.chatSortFilter = data;
+  },
+
+  [types.CHANGE_CHAT_UNREAD_FILTER](_state, data) {
+    _state.chatUnreadFilter = data;
   },
 
   // Update assignee on action cable message

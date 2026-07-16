@@ -5,9 +5,11 @@ import { useToggle } from '@vueuse/core';
 import { vOnClickOutside } from '@vueuse/components';
 import { useUISettings } from 'dashboard/composables/useUISettings';
 import { useMapGetter, useStore } from 'dashboard/composables/store.js';
+import { FEATURE_FLAGS } from 'dashboard/featureFlags';
 import wootConstants from 'dashboard/constants/globals';
 import SelectMenu from 'dashboard/components-next/selectmenu/SelectMenu.vue';
 import NextButton from 'dashboard/components-next/button/Button.vue';
+import Switch from 'dashboard/components-next/switch/Switch.vue';
 
 defineProps({
   isOnExpandedLayout: {
@@ -25,6 +27,11 @@ const { updateUISettings } = useUISettings();
 
 const chatStatusFilter = useMapGetter('getChatStatusFilter');
 const chatSortFilter = useMapGetter('getChatSortFilter');
+const chatUnreadFilter = useMapGetter('getChatUnreadFilter');
+const isFeatureEnabledonAccount = useMapGetter(
+  'accounts/isFeatureEnabledonAccount'
+);
+const currentAccountId = useMapGetter('getCurrentAccountId');
 
 const [showActionsDropdown, toggleDropdown] = useToggle();
 
@@ -37,6 +44,15 @@ const currentSortBy = computed(() => {
     chatSortFilter.value || wootConstants.SORT_BY_TYPE.LAST_ACTIVITY_AT_DESC
   );
 });
+
+const currentUnreadOnly = computed(() => chatUnreadFilter.value || false);
+
+const isUnreadFilterEnabled = computed(() =>
+  isFeatureEnabledonAccount.value(
+    currentAccountId.value,
+    FEATURE_FLAGS.FILTER_CONVERSATIONS_BY_UNREAD
+  )
+);
 
 const chatStatusOptions = computed(() => [
   {
@@ -121,6 +137,7 @@ const saveSelectedFilter = (type, value) => {
     conversations_filter_by: {
       status: type === 'status' ? value : currentStatusFilter.value,
       order_by: type === 'sort' ? value : currentSortBy.value,
+      unread_only: type === 'unread' ? value : currentUnreadOnly.value,
     },
   });
 };
@@ -136,6 +153,19 @@ const handleSortChange = value => {
   store.dispatch('setChatSortFilter', value);
   saveSelectedFilter('sort', value);
 };
+
+const handleUnreadChange = value => {
+  emit('changeFilter', value, 'unread');
+  store.dispatch('setChatUnreadFilter', value);
+  saveSelectedFilter('unread', value);
+};
+
+// Two-way binding for the Switch: reads the store getter, writes through the handler.
+// (Switch's own @change payload is inverted, so we drive it via v-model instead.)
+const unreadOnly = computed({
+  get: () => currentUnreadOnly.value,
+  set: value => handleUnreadChange(value),
+});
 </script>
 
 <template>
@@ -180,6 +210,15 @@ const handleSortChange = value => {
           :sub-menu-position="isOnExpandedLayout ? 'left' : 'right'"
           @update:model-value="handleSortChange"
         />
+      </div>
+      <div
+        v-if="isUnreadFilterEnabled"
+        class="flex items-center justify-between last:mt-4 gap-2"
+      >
+        <span class="text-sm truncate text-n-slate-12">
+          {{ $t('CHAT_LIST.CHAT_SORT.UNREAD_ONLY') }}
+        </span>
+        <Switch v-model="unreadOnly" />
       </div>
     </div>
   </div>

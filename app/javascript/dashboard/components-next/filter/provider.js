@@ -2,6 +2,7 @@ import { computed, h } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOperators } from './operators';
 import { useMapGetter } from 'dashboard/composables/store.js';
+import { FEATURE_FLAGS } from 'dashboard/featureFlags';
 import { useChannelIcon } from 'next/icon/provider';
 import { createContactSearcher } from 'dashboard/components-next/NewConversation/helpers/composeConversationHelper';
 import {
@@ -60,6 +61,16 @@ export function useConversationFilterContext() {
   const inboxes = useMapGetter('inboxes/getInboxes');
   const teams = useMapGetter('teams/getTeams');
   const campaigns = useMapGetter('campaigns/getAllCampaigns');
+  const isFeatureEnabledonAccount = useMapGetter(
+    'accounts/isFeatureEnabledonAccount'
+  );
+  const currentAccountId = useMapGetter('getCurrentAccountId');
+  const isUnreadFilterEnabled = computed(() =>
+    isFeatureEnabledonAccount.value(
+      currentAccountId.value,
+      FEATURE_FLAGS.FILTER_CONVERSATIONS_BY_UNREAD
+    )
+  );
 
   const {
     equalityOperators,
@@ -124,6 +135,24 @@ export function useConversationFilterContext() {
       filterOperators: equalityOperators.value,
       attributeModel: 'standard',
     },
+    ...(isUnreadFilterEnabled.value
+      ? [
+          {
+            attributeKey: CONVERSATION_ATTRIBUTES.UNREAD,
+            value: CONVERSATION_ATTRIBUTES.UNREAD,
+            attributeName: t('FILTER.ATTRIBUTES.UNREAD'),
+            label: t('FILTER.ATTRIBUTES.UNREAD'),
+            inputType: 'multiSelect',
+            options: [
+              { id: 'true', name: t('FILTER.UNREAD_OPTIONS.UNREAD') },
+              { id: 'false', name: t('FILTER.UNREAD_OPTIONS.READ') },
+            ],
+            dataType: 'text',
+            filterOperators: equalityOperators.value,
+            attributeModel: 'standard',
+          },
+        ]
+      : []),
     {
       attributeKey: CONVERSATION_ATTRIBUTES.PRIORITY,
       value: CONVERSATION_ATTRIBUTES.PRIORITY,

@@ -40,7 +40,8 @@
     "SORT_TOOLTIP_LABEL": "Sort conversations",
     "CHAT_SORT": {
       "STATUS": "Status",
-      "ORDER_BY": "Order by"
+      "ORDER_BY": "Order by",
+      "UNREAD_ONLY": "Unread only"
     },
     "CHAT_TIME_STAMP": {
       "CREATED": {

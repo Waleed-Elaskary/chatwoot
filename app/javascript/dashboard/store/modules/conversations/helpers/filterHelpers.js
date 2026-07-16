@@ -81,6 +81,14 @@ const getValueFromConversation = (conversation, attributeKey) => {
       );
     case 'inbox_id':
       return conversation.inbox_id;
+    case 'unread':
+      // Per-agent unread flag serialized as `unread_for_agent`. Returned as a string to match
+      // the filter's string option ids ('true'/'false'); undefined when not serialized so the
+      // conversation matches neither option until a fetch populates it.
+      return conversation.unread_for_agent === undefined ||
+        conversation.unread_for_agent === null
+        ? undefined
+        : String(conversation.unread_for_agent);
     case 'team_id':
       return conversation.meta?.team?.id;
     case 'browser_language':
