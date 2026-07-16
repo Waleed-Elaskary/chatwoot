@@ -231,6 +231,7 @@
   display_name: Filter Conversations by Unread
   enabled: false
   chatwoot_internal: true
+  column: feature_flags_ext_1
 - name: companies
   display_name: Companies
   enabled: false
